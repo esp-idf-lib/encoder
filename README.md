@@ -11,7 +11,7 @@ HW timer-based driver for incremental rotary encoders.
 ## Installation
 
 ```sh
-idf.py add-dependency "esp-idf-lib/encoder^1.0.0
+idf.py add-dependency esp-idf-lib/encoder^1.0.0
 ```
 
 ## Support
