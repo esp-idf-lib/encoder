@@ -1,5 +1,5 @@
 ---
-version: 1.0.1
+version: 1.0.2
 description: HW timer-based driver for incremental rotary encoders
 license: BSD-3
 targets:
