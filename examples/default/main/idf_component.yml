@@ -1,7 +1,8 @@
----
 version: 1.0.0
 description: default
 dependencies:
   esp-idf-lib/encoder:
-    version: "*"
-    override_path: "../../../"
+    version: '*'
+    override_path: ../../../
+  esp-idf-lib/esp_idf_lib_helpers:
+    version: '*'
