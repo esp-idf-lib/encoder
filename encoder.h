@@ -51,14 +51,16 @@ extern "C" {
 /**
  * Button state
  */
-typedef enum {
+typedef enum
+{
     RE_BTN_RELEASED = 0,      //!< Button currently released
     RE_BTN_PRESSED = 1,       //!< Button currently pressed
     RE_BTN_LONG_PRESSED = 2   //!< Button currently long pressed
 } rotary_encoder_btn_state_t;
 
 //Rotary encoder acceleration variables
-typedef struct {
+typedef struct
+{
     int64_t last_time;
     uint16_t coeff;
 } rotary_encoder_acceleration_t;
@@ -79,7 +81,8 @@ typedef struct
 /**
  * Event type
  */
-typedef enum {
+typedef enum
+{
     RE_ET_CHANGED = 0,      //!< Encoder turned
     RE_ET_BTN_RELEASED,     //!< Button released
     RE_ET_BTN_PRESSED,      //!< Button pressed
