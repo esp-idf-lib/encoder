@@ -68,6 +68,7 @@ struct rotary_encoder
     uint32_t btn_long_press_time_us;     //!< Long press threshold in microseconds
     uint32_t acceleration_min_cutoff_ms; //!< Minimum acceleration cutoff time in milliseconds
     uint32_t acceleration_max_cutoff_ms; //!< Maximum acceleration cutoff time in milliseconds
+    uint32_t polling_interval_us;        //!< Polling interval in microseconds
     rotary_encoder_event_cb_t callback;  //!< Event callback
     void *callback_ctx;                  //!< User context passed to callback
     esp_timer_handle_t timer;
@@ -91,7 +92,7 @@ inline static void read_encoder(rotary_encoder_handle_t handle)
             if (handle->btn_state == RE_BTN_PRESSED && handle->btn_pressed_time_us < handle->btn_dead_time_us)
             {
                 // Dead time
-                handle->btn_pressed_time_us += CONFIG_RE_INTERVAL_US;
+                handle->btn_pressed_time_us += handle->polling_interval_us;
                 break;
             }
 
@@ -108,7 +109,7 @@ inline static void read_encoder(rotary_encoder_handle_t handle)
                     break;
                 }
 
-                handle->btn_pressed_time_us += CONFIG_RE_INTERVAL_US;
+                handle->btn_pressed_time_us += handle->polling_interval_us;
 
                 if (handle->btn_state == RE_BTN_PRESSED && handle->btn_pressed_time_us >= handle->btn_long_press_time_us)
                 {
@@ -197,6 +198,7 @@ esp_err_t rotary_encoder_create(const rotary_encoder_config_t *config, rotary_en
     re->btn_long_press_time_us = config->btn_long_press_time_us;
     re->acceleration_min_cutoff_ms = config->acceleration_min_cutoff_ms;
     re->acceleration_max_cutoff_ms = config->acceleration_max_cutoff_ms;
+    re->polling_interval_us = config->polling_interval_us;
     re->callback = config->callback;
     re->callback_ctx = config->callback_ctx;
 
@@ -242,7 +244,7 @@ esp_err_t rotary_encoder_create(const rotary_encoder_config_t *config, rotary_en
         return err;
     }
 
-    err = esp_timer_start_periodic(re->timer, CONFIG_RE_INTERVAL_US);
+    err = esp_timer_start_periodic(re->timer, re->polling_interval_us);
     if (err != ESP_OK)
     {
         esp_timer_delete(re->timer);

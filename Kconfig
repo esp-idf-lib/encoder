@@ -1,9 +1,12 @@
 menu "Rotary encoders"
 
 	config RE_INTERVAL_US
-		int "Polling interval, us"
+		int "Default polling interval, us"
 		default 10000 if IDF_TARGET_ESP8266
 		default 1000 if !IDF_TARGET_ESP8266
+		help
+		    Default polling interval in microseconds. Can be overridden per-encoder at runtime
+		    via rotary_encoder_config_t.polling_interval_us.
 
 	config RE_BTN_DEAD_TIME_US
 		int "Default button dead time, us"
