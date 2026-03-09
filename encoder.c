@@ -65,8 +65,8 @@ struct rotary_encoder
     uint8_t btn_pressed_level;           //!< GPIO level when button is pressed (0 or 1)
     uint32_t btn_dead_time_us;           //!< Button dead time in microseconds
     uint32_t btn_long_press_time_us;     //!< Long press threshold in microseconds
-    uint32_t acceleration_min_cutoff_ms; //!< Minimum acceleration cutoff time in milliseconds
-    uint32_t acceleration_max_cutoff_ms; //!< Maximum acceleration cutoff time in milliseconds
+    uint32_t acceleration_threshold_ms;  //!< Acceleration threshold in milliseconds (acceleration starts below this interval)
+    uint32_t acceleration_cap_ms;        //!< Acceleration cap in milliseconds (minimum interval, limits max acceleration)
     uint32_t polling_interval_us;        //!< Polling interval in microseconds
     rotary_encoder_event_cb_t callback;  //!< Event callback
     void *callback_ctx;                  //!< User context passed to callback
@@ -155,16 +155,16 @@ inline static void read_encoder(rotary_encoder_handle_t handle)
         if (handle->acceleration.coeff > 1)
         {
             int64_t nowMicros = esp_timer_get_time();
-            uint32_t accelerationMinCutoffMillis = handle->acceleration_min_cutoff_ms;
-            uint32_t accelerationMaxCutoffMillis = handle->acceleration_max_cutoff_ms;
+            uint32_t accelerationThresholdMs = handle->acceleration_threshold_ms;
+            uint32_t accelerationCapMs = handle->acceleration_cap_ms;
             uint32_t millisAfterLastMotion = (nowMicros - handle->acceleration.last_time) / 1000u;
             handle->acceleration.last_time = nowMicros;
 
-            if (millisAfterLastMotion < accelerationMinCutoffMillis)
+            if (millisAfterLastMotion < accelerationThresholdMs)
             {
-                if (millisAfterLastMotion < accelerationMaxCutoffMillis)
+                if (millisAfterLastMotion < accelerationCapMs)
                 {
-                    millisAfterLastMotion = accelerationMaxCutoffMillis; // limit to maximum acceleration
+                    millisAfterLastMotion = accelerationCapMs; // limit to maximum acceleration
                 }
                 ev.diff = inc * ((int32_t)(handle->acceleration.coeff / millisAfterLastMotion) == 0 ? 1 : (int32_t)(handle->acceleration.coeff / millisAfterLastMotion));
             }
@@ -195,8 +195,8 @@ esp_err_t rotary_encoder_create(const rotary_encoder_config_t *config, rotary_en
     re->btn_pressed_level = config->btn_pressed_level;
     re->btn_dead_time_us = config->btn_dead_time_us;
     re->btn_long_press_time_us = config->btn_long_press_time_us;
-    re->acceleration_min_cutoff_ms = config->acceleration_min_cutoff_ms;
-    re->acceleration_max_cutoff_ms = config->acceleration_max_cutoff_ms;
+    re->acceleration_threshold_ms = config->acceleration_threshold_ms;
+    re->acceleration_cap_ms = config->acceleration_cap_ms;
     re->polling_interval_us = config->polling_interval_us;
     re->callback = config->callback;
     re->callback_ctx = config->callback_ctx;

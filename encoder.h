@@ -100,8 +100,8 @@ typedef struct
     bool enable_internal_pullup;         //!< Enable internal pull-up/pull-down resistors on GPIO pins
     uint32_t btn_dead_time_us;           //!< Button dead time in microseconds
     uint32_t btn_long_press_time_us;     //!< Long press threshold in microseconds
-    uint32_t acceleration_min_cutoff_ms; //!< Minimum acceleration cutoff time in milliseconds
-    uint32_t acceleration_max_cutoff_ms; //!< Maximum acceleration cutoff time in milliseconds
+    uint32_t acceleration_threshold_ms;  //!< Acceleration threshold in milliseconds (acceleration starts below this interval)
+    uint32_t acceleration_cap_ms;        //!< Acceleration cap in milliseconds (minimum interval, limits max acceleration)
     uint32_t polling_interval_us;        //!< Polling interval in microseconds
     rotary_encoder_event_cb_t callback;  //!< Event callback (required)
     void *callback_ctx;                  //!< User context passed to callback
@@ -123,8 +123,8 @@ typedef struct
     .enable_internal_pullup = RE_DEFAULT_ENABLE_INTERNAL_PULLUP, \
     .btn_dead_time_us = CONFIG_RE_BTN_DEAD_TIME_US, \
     .btn_long_press_time_us = CONFIG_RE_BTN_LONG_PRESS_TIME_US, \
-    .acceleration_min_cutoff_ms = CONFIG_RE_ACCELERATION_MIN_CUTOFF, \
-    .acceleration_max_cutoff_ms = CONFIG_RE_ACCELERATION_MAX_CUTOFF, \
+    .acceleration_threshold_ms = CONFIG_RE_ACCELERATION_THRESHOLD, \
+    .acceleration_cap_ms = CONFIG_RE_ACCELERATION_CAP, \
     .polling_interval_us = CONFIG_RE_INTERVAL_US, \
     .callback = NULL, \
     .callback_ctx = NULL, \
