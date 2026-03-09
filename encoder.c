@@ -206,15 +206,23 @@ esp_err_t rotary_encoder_create(const rotary_encoder_config_t *config, rotary_en
     gpio_config_t io_conf;
     memset(&io_conf, 0, sizeof(gpio_config_t));
     io_conf.mode = GPIO_MODE_INPUT;
-    if (re->btn_pressed_level == 0)
+    if (config->enable_internal_pullup)
     {
-        io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
-        io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+        if (re->btn_pressed_level == 0)
+        {
+            io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
+            io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+        }
+        else
+        {
+            io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
+            io_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
+        }
     }
     else
     {
         io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
-        io_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
+        io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
     }
     io_conf.intr_type = GPIO_INTR_DISABLE;
     io_conf.pin_bit_mask = GPIO_BIT(re->pin_a) | GPIO_BIT(re->pin_b);
