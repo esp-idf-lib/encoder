@@ -50,7 +50,6 @@ static const char *TAG = "encoder";
 static rotary_encoder_t *encs[CONFIG_RE_MAX] = { 0 };
 static const int8_t valid_states[] = { 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0 };
 static SemaphoreHandle_t mutex;
-static QueueHandle_t _queue;
 
 #define GPIO_BIT(x) ((x) < 32 ? BIT(x) : ((uint64_t)(((uint64_t)1)<<(x))))
 #define CHECK(x) do { esp_err_t __; if ((__ = x) != ESP_OK) return __; } while (0)
@@ -83,7 +82,7 @@ inline static void read_encoder(rotary_encoder_t *re)
                     re->btn_state = RE_BTN_PRESSED;
                     re->btn_pressed_time_us = 0;
                     ev.type = RE_ET_BTN_PRESSED;
-                    xQueueSendToBack(_queue, &ev, 0);
+                    re->callback(&ev, re->callback_ctx);
                     break;
                 }
 
@@ -94,7 +93,7 @@ inline static void read_encoder(rotary_encoder_t *re)
                     // Long press
                     re->btn_state = RE_BTN_LONG_PRESSED;
                     ev.type = RE_ET_BTN_LONG_PRESSED;
-                    xQueueSendToBack(_queue, &ev, 0);
+                    re->callback(&ev, re->callback_ctx);
                 }
             }
             else if (re->btn_state != RE_BTN_RELEASED)
@@ -103,11 +102,11 @@ inline static void read_encoder(rotary_encoder_t *re)
                 // released
                 re->btn_state = RE_BTN_RELEASED;
                 ev.type = RE_ET_BTN_RELEASED;
-                xQueueSendToBack(_queue, &ev, 0);
+                re->callback(&ev, re->callback_ctx);
                 if (clicked)
                 {
                     ev.type = RE_ET_BTN_CLICKED;
-                    xQueueSendToBack(_queue, &ev, 0);
+                    re->callback(&ev, re->callback_ctx);
                 }
             }
         }
@@ -151,7 +150,7 @@ inline static void read_encoder(rotary_encoder_t *re)
 
         re->store = 0;
         ev.type = RE_ET_CHANGED;
-        xQueueSendToBack(_queue, &ev, 0);
+        re->callback(&ev, re->callback_ctx);
     }
 }
 
@@ -177,11 +176,8 @@ static const esp_timer_create_args_t timer_args =
 
 static esp_timer_handle_t timer;
 
-esp_err_t rotary_encoder_init(QueueHandle_t queue)
+esp_err_t rotary_encoder_init(void)
 {
-    CHECK_ARG(queue);
-    _queue = queue;
-
     mutex = xSemaphoreCreateMutex();
     if (!mutex)
     {
@@ -198,7 +194,7 @@ esp_err_t rotary_encoder_init(QueueHandle_t queue)
 
 esp_err_t rotary_encoder_add(const rotary_encoder_config_t *config, rotary_encoder_t *re)
 {
-    CHECK_ARG(re && config);
+    CHECK_ARG(re && config && config->callback);
     if (!xSemaphoreTake(mutex, MUTEX_TIMEOUT))
     {
         ESP_LOGE(TAG, "Failed to take mutex");
@@ -230,6 +226,8 @@ esp_err_t rotary_encoder_add(const rotary_encoder_config_t *config, rotary_encod
     re->btn_long_press_time_us = config->btn_long_press_time_us;
     re->acceleration_min_cutoff_ms = config->acceleration_min_cutoff_ms;
     re->acceleration_max_cutoff_ms = config->acceleration_max_cutoff_ms;
+    re->callback = config->callback;
+    re->callback_ctx = config->callback_ctx;
 
     // setup GPIO
     gpio_config_t io_conf;

@@ -42,7 +42,6 @@
 #include <esp_err.h>
 #include <driver/gpio.h>
 #include <freertos/FreeRTOS.h>
-#include <freertos/queue.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -59,6 +58,38 @@ typedef enum
 } rotary_encoder_btn_state_t;
 
 /**
+ * Event type
+ */
+typedef enum
+{
+    RE_ET_CHANGED = 0,      //!< Encoder turned
+    RE_ET_BTN_RELEASED,     //!< Button released
+    RE_ET_BTN_PRESSED,      //!< Button pressed
+    RE_ET_BTN_LONG_PRESSED, //!< Button long pressed (press time (us) > RE_BTN_LONG_PRESS_TIME_US)
+    RE_ET_BTN_CLICKED       //!< Button was clicked
+} rotary_encoder_event_type_t;
+
+typedef struct rotary_encoder rotary_encoder_t;
+
+/**
+ * Event
+ */
+typedef struct
+{
+    rotary_encoder_event_type_t type;  //!< Event type
+    rotary_encoder_t *sender;          //!< Pointer to descriptor
+    int32_t diff;                      //!< Difference between new and old positions (only if type == RE_ET_CHANGED)
+} rotary_encoder_event_t;
+
+/**
+ * Callback type for encoder events.
+ *
+ * The callback is invoked from the ESP timer task context while the
+ * library mutex is held. It must not block or call back into the library.
+ */
+typedef void (*rotary_encoder_event_cb_t)(const rotary_encoder_event_t *event, void *ctx);
+
+/**
  * Per-encoder configuration
  */
 typedef struct
@@ -71,6 +102,8 @@ typedef struct
     uint32_t btn_long_press_time_us;     //!< Long press threshold in microseconds
     uint32_t acceleration_min_cutoff_ms; //!< Minimum acceleration cutoff time in milliseconds
     uint32_t acceleration_max_cutoff_ms; //!< Maximum acceleration cutoff time in milliseconds
+    rotary_encoder_event_cb_t callback;  //!< Event callback (required)
+    void *callback_ctx;                  //!< User context passed to callback
 } rotary_encoder_config_t;
 
 #ifdef CONFIG_RE_BTN_PRESSED_LEVEL_0
@@ -88,6 +121,8 @@ typedef struct
     .btn_long_press_time_us = CONFIG_RE_BTN_LONG_PRESS_TIME_US, \
     .acceleration_min_cutoff_ms = CONFIG_RE_ACCELERATION_MIN_CUTOFF, \
     .acceleration_max_cutoff_ms = CONFIG_RE_ACCELERATION_MAX_CUTOFF, \
+    .callback = NULL, \
+    .callback_ctx = NULL, \
 }
 
 //Rotary encoder acceleration variables
@@ -100,7 +135,7 @@ typedef struct
 /**
  * Rotary encoder descriptor
  */
-typedef struct
+struct rotary_encoder
 {
     gpio_num_t pin_a;                    //!< Encoder pin A
     gpio_num_t pin_b;                    //!< Encoder pin B
@@ -110,43 +145,22 @@ typedef struct
     uint32_t btn_long_press_time_us;     //!< Long press threshold in microseconds
     uint32_t acceleration_min_cutoff_ms; //!< Minimum acceleration cutoff time in milliseconds
     uint32_t acceleration_max_cutoff_ms; //!< Maximum acceleration cutoff time in milliseconds
+    rotary_encoder_event_cb_t callback;  //!< Event callback
+    void *callback_ctx;                  //!< User context passed to callback
     uint8_t code;
     uint16_t store;
     size_t index;
     uint64_t btn_pressed_time_us;
     rotary_encoder_btn_state_t btn_state;
     rotary_encoder_acceleration_t acceleration;
-} rotary_encoder_t;
-
-/**
- * Event type
- */
-typedef enum
-{
-    RE_ET_CHANGED = 0,      //!< Encoder turned
-    RE_ET_BTN_RELEASED,     //!< Button released
-    RE_ET_BTN_PRESSED,      //!< Button pressed
-    RE_ET_BTN_LONG_PRESSED, //!< Button long pressed (press time (us) > RE_BTN_LONG_PRESS_TIME_US)
-    RE_ET_BTN_CLICKED       //!< Button was clicked
-} rotary_encoder_event_type_t;
-
-/**
- * Event
- */
-typedef struct
-{
-    rotary_encoder_event_type_t type;  //!< Event type
-    rotary_encoder_t *sender;          //!< Pointer to descriptor
-    int32_t diff;                      //!< Difference between new and old positions (only if type == RE_ET_CHANGED)
-} rotary_encoder_event_t;
+};
 
 /**
  * @brief Initialize library
  *
- * @param queue Event queue to send encoder events
  * @return `ESP_OK` on success
  */
-esp_err_t rotary_encoder_init(QueueHandle_t queue);
+esp_err_t rotary_encoder_init(void);
 
 /**
  * @brief Add new rotary encoder
