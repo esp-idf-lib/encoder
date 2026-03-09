@@ -1,5 +1,6 @@
 #include <inttypes.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
 #include <freertos/task.h>
 #include <encoder.h>
 #include <esp_idf_lib_helpers.h>
@@ -27,19 +28,27 @@ static const char *TAG = "encoder_example";
 static QueueHandle_t event_queue;
 static rotary_encoder_t re;
 
+static void encoder_event_handler(const rotary_encoder_event_t *event, void *ctx)
+{
+    QueueHandle_t queue = (QueueHandle_t)ctx;
+    xQueueSendToBack(queue, event, 0);
+}
+
 void test(void *arg)
 {
     // Create event queue for rotary encoders
     event_queue = xQueueCreate(EV_QUEUE_LEN, sizeof(rotary_encoder_event_t));
 
     // Setup rotary encoder library
-    ESP_ERROR_CHECK(rotary_encoder_init(event_queue));
+    ESP_ERROR_CHECK(rotary_encoder_init());
 
     // Add one encoder
     rotary_encoder_config_t config = ROTARY_ENCODER_DEFAULT_CONFIG();
     config.pin_a = RE_A_GPIO;
     config.pin_b = RE_B_GPIO;
     config.pin_btn = RE_BTN_GPIO;
+    config.callback = encoder_event_handler;
+    config.callback_ctx = event_queue;
     ESP_ERROR_CHECK(rotary_encoder_add(&config, &re));
 
     rotary_encoder_event_t e;
