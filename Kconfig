@@ -1,13 +1,12 @@
 menu "Rotary encoders"
 
-	config RE_MAX
-		int "Maximum number of rotary encoders"
-		default 1
-
 	config RE_INTERVAL_US
-		int "Polling interval, us"
+		int "Default polling interval, us"
 		default 10000 if IDF_TARGET_ESP8266
 		default 1000 if !IDF_TARGET_ESP8266
+		help
+		    Default polling interval in microseconds. Can be overridden per-encoder at runtime
+		    via rotary_encoder_config_t.polling_interval_us.
 
 	config RE_BTN_DEAD_TIME_US
 		int "Default button dead time, us"
@@ -34,19 +33,19 @@ menu "Rotary encoders"
 		    Default long press threshold in microseconds. Can be overridden per-encoder at runtime
 		    via rotary_encoder_config_t.btn_long_press_time_us.
 
-	config RE_ACCELERATION_MIN_CUTOFF
-		int "Default minimum acceleration cutoff time (ms)"
+	config RE_ACCELERATION_THRESHOLD
+		int "Default acceleration threshold (ms)"
 		default 200
 		help
-		    Default minimum acceleration cutoff time in milliseconds. At this interval between
-		    rotary ticks, minimum acceleration is applied. Can be overridden per-encoder at runtime
-		    via rotary_encoder_config_t.acceleration_min_cutoff_ms.
+		    Acceleration threshold in milliseconds. When the interval between rotary ticks is below
+		    this value, acceleration is applied. Can be overridden per-encoder at runtime
+		    via rotary_encoder_config_t.acceleration_threshold_ms.
 
-	config RE_ACCELERATION_MAX_CUTOFF
-		int "Default maximum acceleration cutoff time (ms)"
+	config RE_ACCELERATION_CAP
+		int "Default acceleration cap (ms)"
 		default 4
 		help
-		    Default maximum acceleration cutoff time in milliseconds. At this interval between
-		    rotary ticks, maximum acceleration is applied. Can be overridden per-encoder at runtime
-		    via rotary_encoder_config_t.acceleration_max_cutoff_ms.
+		    Acceleration cap in milliseconds. The minimum tick interval used for acceleration
+		    calculation, limiting the maximum acceleration effect. Can be overridden per-encoder
+		    at runtime via rotary_encoder_config_t.acceleration_cap_ms.
 endmenu
