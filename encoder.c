@@ -39,6 +39,8 @@
 #include <string.h>
 #include <esp_log.h>
 #include <esp_timer.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 #if defined(CONFIG_IDF_TARGET_ESP8266) && CONFIG_RE_INTERVAL_US < 10000
 #error Too small CONFIG_RE_INTERVAL_US! For ESP8266 it should be >= 10000
@@ -71,6 +73,7 @@ struct rotary_encoder
     rotary_encoder_event_cb_t callback;  //!< Event callback
     void *callback_ctx;                  //!< User context passed to callback
     esp_timer_handle_t timer;
+    SemaphoreHandle_t lock;
     uint8_t code;
     uint16_t store;
     uint64_t btn_pressed_time_us;
@@ -178,7 +181,10 @@ inline static void read_encoder(rotary_encoder_handle_t handle)
 
 static void encoder_timer_handler(void *arg)
 {
-    read_encoder((rotary_encoder_handle_t)arg);
+    rotary_encoder_handle_t handle = (rotary_encoder_handle_t)arg;
+    xSemaphoreTake(handle->lock, portMAX_DELAY);
+    read_encoder(handle);
+    xSemaphoreGive(handle->lock);
 }
 
 esp_err_t rotary_encoder_create(const rotary_encoder_config_t *config, rotary_encoder_handle_t *handle)
@@ -201,10 +207,18 @@ esp_err_t rotary_encoder_create(const rotary_encoder_config_t *config, rotary_en
     re->callback = config->callback;
     re->callback_ctx = config->callback_ctx;
 
+    re->lock = xSemaphoreCreateMutex();
+    if (!re->lock)
+    {
+        free(re);
+        return ESP_ERR_NO_MEM;
+    }
+
 #if defined(CONFIG_IDF_TARGET_ESP8266)
     if (re->polling_interval_us < 10000)
     {
         ESP_LOGE(TAG, "Polling interval too small for ESP8266, must be >= 10000us");
+        vSemaphoreDelete(re->lock);
         free(re);
         return ESP_ERR_INVALID_ARG;
     }
@@ -240,6 +254,7 @@ esp_err_t rotary_encoder_create(const rotary_encoder_config_t *config, rotary_en
     esp_err_t err = gpio_config(&io_conf);
     if (err != ESP_OK)
     {
+        vSemaphoreDelete(re->lock);
         free(re);
         return err;
     }
@@ -256,6 +271,7 @@ esp_err_t rotary_encoder_create(const rotary_encoder_config_t *config, rotary_en
     err = esp_timer_create(&timer_args, &re->timer);
     if (err != ESP_OK)
     {
+        vSemaphoreDelete(re->lock);
         free(re);
         return err;
     }
@@ -264,6 +280,7 @@ esp_err_t rotary_encoder_create(const rotary_encoder_config_t *config, rotary_en
     if (err != ESP_OK)
     {
         esp_timer_delete(re->timer);
+        vSemaphoreDelete(re->lock);
         free(re);
         return err;
     }
@@ -281,6 +298,11 @@ esp_err_t rotary_encoder_delete(rotary_encoder_handle_t handle)
     esp_timer_stop(handle->timer);
     esp_timer_delete(handle->timer);
 
+    // Wait for any in-flight callback to complete before freeing
+    xSemaphoreTake(handle->lock, portMAX_DELAY);
+    xSemaphoreGive(handle->lock);
+    vSemaphoreDelete(handle->lock);
+
     ESP_LOGI(TAG, "Deleted rotary encoder, A: %d, B: %d, BTN: %d", handle->pin_a, handle->pin_b, handle->pin_btn);
     free(handle);
     return ESP_OK;
@@ -289,14 +311,18 @@ esp_err_t rotary_encoder_delete(rotary_encoder_handle_t handle)
 esp_err_t rotary_encoder_enable_acceleration(rotary_encoder_handle_t handle, uint16_t coeff)
 {
     CHECK_ARG(handle);
+    xSemaphoreTake(handle->lock, portMAX_DELAY);
     handle->acceleration.coeff = coeff;
     handle->acceleration.last_time = esp_timer_get_time();
+    xSemaphoreGive(handle->lock);
     return ESP_OK;
 }
 
 esp_err_t rotary_encoder_disable_acceleration(rotary_encoder_handle_t handle)
 {
     CHECK_ARG(handle);
+    xSemaphoreTake(handle->lock, portMAX_DELAY);
     handle->acceleration.coeff = 0;
+    xSemaphoreGive(handle->lock);
     return ESP_OK;
 }
