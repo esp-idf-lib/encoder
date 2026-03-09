@@ -1,7 +1,6 @@
 #include <inttypes.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-#include <string.h>
 #include <encoder.h>
 #include <esp_idf_lib_helpers.h>
 #include <esp_log.h>
@@ -37,11 +36,11 @@ void test(void *arg)
     ESP_ERROR_CHECK(rotary_encoder_init(event_queue));
 
     // Add one encoder
-    memset(&re, 0, sizeof(rotary_encoder_t));
-    re.pin_a = RE_A_GPIO;
-    re.pin_b = RE_B_GPIO;
-    re.pin_btn = RE_BTN_GPIO;
-    ESP_ERROR_CHECK(rotary_encoder_add(&re));
+    rotary_encoder_config_t config = ROTARY_ENCODER_DEFAULT_CONFIG();
+    config.pin_a = RE_A_GPIO;
+    config.pin_b = RE_B_GPIO;
+    config.pin_btn = RE_BTN_GPIO;
+    ESP_ERROR_CHECK(rotary_encoder_add(&config, &re));
 
     rotary_encoder_event_t e;
     int32_t val = 0;
