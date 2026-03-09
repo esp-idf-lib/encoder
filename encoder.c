@@ -42,12 +42,6 @@
 
 #define MUTEX_TIMEOUT 10
 
-#ifdef CONFIG_RE_BTN_PRESSED_LEVEL_0
-#define BTN_PRESSED_LEVEL 0
-#else
-#define BTN_PRESSED_LEVEL 1
-#endif
-
 #if defined(CONFIG_IDF_TARGET_ESP8266) && CONFIG_RE_INTERVAL_US < 10000
 #error Too small CONFIG_RE_INTERVAL_US! For ESP8266 it should be >= 10000
 #endif
@@ -61,6 +55,7 @@ static QueueHandle_t _queue;
 #define GPIO_BIT(x) ((x) < 32 ? BIT(x) : ((uint64_t)(((uint64_t)1)<<(x))))
 #define CHECK(x) do { esp_err_t __; if ((__ = x) != ESP_OK) return __; } while (0)
 #define CHECK_ARG(VAL) do { if (!(VAL)) return ESP_ERR_INVALID_ARG; } while (0)
+#define PIN_VALID(p) ((p) >= 0 && (p) < GPIO_NUM_MAX)
 
 inline static void read_encoder(rotary_encoder_t *re)
 {
@@ -69,10 +64,10 @@ inline static void read_encoder(rotary_encoder_t *re)
         .sender = re
     };
 
-    if (re->pin_btn < GPIO_NUM_MAX)
+    if (PIN_VALID(re->pin_btn))
         do
         {
-            if (re->btn_state == RE_BTN_PRESSED && re->btn_pressed_time_us < CONFIG_RE_BTN_DEAD_TIME_US)
+            if (re->btn_state == RE_BTN_PRESSED && re->btn_pressed_time_us < re->btn_dead_time_us)
             {
                 // Dead time
                 re->btn_pressed_time_us += CONFIG_RE_INTERVAL_US;
@@ -80,7 +75,7 @@ inline static void read_encoder(rotary_encoder_t *re)
             }
 
             // read button state
-            if (gpio_get_level(re->pin_btn) == BTN_PRESSED_LEVEL)
+            if (gpio_get_level(re->pin_btn) == re->btn_pressed_level)
             {
                 if (re->btn_state == RE_BTN_RELEASED)
                 {
@@ -94,7 +89,7 @@ inline static void read_encoder(rotary_encoder_t *re)
 
                 re->btn_pressed_time_us += CONFIG_RE_INTERVAL_US;
 
-                if (re->btn_state == RE_BTN_PRESSED && re->btn_pressed_time_us >= CONFIG_RE_BTN_LONG_PRESS_TIME_US)
+                if (re->btn_state == RE_BTN_PRESSED && re->btn_pressed_time_us >= re->btn_long_press_time_us)
                 {
                     // Long press
                     re->btn_state = RE_BTN_LONG_PRESSED;
@@ -139,10 +134,8 @@ inline static void read_encoder(rotary_encoder_t *re)
         if (re->acceleration.coeff > 1)
         {
             int64_t nowMicros = esp_timer_get_time();
-            // at 200 ms, we want to have minimum acceleration
-            uint32_t accelerationMinCutoffMillis = CONFIG_RE_ACCELERATION_MIN_CUTOFF;
-            // at 4 ms, we want to have maximum acceleration
-            uint32_t accelerationMaxCutoffMillis = CONFIG_RE_ACCELERATION_MAX_CUTOFF;
+            uint32_t accelerationMinCutoffMillis = re->acceleration_min_cutoff_ms;
+            uint32_t accelerationMaxCutoffMillis = re->acceleration_max_cutoff_ms;
             uint32_t millisAfterLastMotion = (nowMicros - re->acceleration.last_time) / 1000u;
             re->acceleration.last_time = nowMicros;
 
@@ -203,36 +196,46 @@ esp_err_t rotary_encoder_init(QueueHandle_t queue)
     return ESP_OK;
 }
 
-esp_err_t rotary_encoder_add(rotary_encoder_t *re)
+esp_err_t rotary_encoder_add(const rotary_encoder_config_t *config, rotary_encoder_t *re)
 {
-    CHECK_ARG(re);
+    CHECK_ARG(re && config);
     if (!xSemaphoreTake(mutex, MUTEX_TIMEOUT))
     {
         ESP_LOGE(TAG, "Failed to take mutex");
         return ESP_ERR_INVALID_STATE;
     }
 
-    bool ok = false;
+    size_t index = CONFIG_RE_MAX;
     for (size_t i = 0; i < CONFIG_RE_MAX; i++)
         if (!encs[i])
         {
-            re->index = i;
-            encs[i] = re;
-            ok = true;
+            index = i;
             break;
         }
-    if (!ok)
+    if (index == CONFIG_RE_MAX)
     {
         ESP_LOGE(TAG, "Too many encoders");
         xSemaphoreGive(mutex);
         return ESP_ERR_NO_MEM;
     }
 
+    // Initialize handle and copy config
+    memset(re, 0, sizeof(*re));
+    re->index = index;
+    re->pin_a = config->pin_a;
+    re->pin_b = config->pin_b;
+    re->pin_btn = config->pin_btn;
+    re->btn_pressed_level = config->btn_pressed_level;
+    re->btn_dead_time_us = config->btn_dead_time_us;
+    re->btn_long_press_time_us = config->btn_long_press_time_us;
+    re->acceleration_min_cutoff_ms = config->acceleration_min_cutoff_ms;
+    re->acceleration_max_cutoff_ms = config->acceleration_max_cutoff_ms;
+
     // setup GPIO
     gpio_config_t io_conf;
     memset(&io_conf, 0, sizeof(gpio_config_t));
     io_conf.mode = GPIO_MODE_INPUT;
-    if (BTN_PRESSED_LEVEL == 0)
+    if (re->btn_pressed_level == 0)
     {
         io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
         io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
@@ -244,12 +247,12 @@ esp_err_t rotary_encoder_add(rotary_encoder_t *re)
     }
     io_conf.intr_type = GPIO_INTR_DISABLE;
     io_conf.pin_bit_mask = GPIO_BIT(re->pin_a) | GPIO_BIT(re->pin_b);
-    if (re->pin_btn < GPIO_NUM_MAX)
+    if (PIN_VALID(re->pin_btn))
         io_conf.pin_bit_mask |= GPIO_BIT(re->pin_btn);
     CHECK(gpio_config(&io_conf));
 
-    re->btn_state = RE_BTN_RELEASED;
-    re->btn_pressed_time_us = 0;
+    // Register encoder after full initialization so timer_handler never sees a partial state
+    encs[index] = re;
 
     xSemaphoreGive(mutex);
 

@@ -3,37 +3,50 @@ menu "Rotary encoders"
 	config RE_MAX
 		int "Maximum number of rotary encoders"
 		default 1
-			
+
 	config RE_INTERVAL_US
 		int "Polling interval, us"
 		default 10000 if IDF_TARGET_ESP8266
 		default 1000 if !IDF_TARGET_ESP8266
-		
+
 	config RE_BTN_DEAD_TIME_US
-		int "Button dead time, us"
+		int "Default button dead time, us"
 		default 10000
-			
+		help
+		    Default button dead time in microseconds. Can be overridden per-encoder at runtime
+		    via rotary_encoder_config_t.btn_dead_time_us.
+
 	choice RE_BTN_PRESSED_LEVEL
-		prompt "Logical level on pressed button"
+		prompt "Default logical level on pressed button"
+		help
+		    Default GPIO level when button is pressed. Can be overridden per-encoder at runtime
+		    via rotary_encoder_config_t.btn_pressed_level.
 		config RE_BTN_PRESSED_LEVEL_0
 			bool "0"
 		config RE_BTN_PRESSED_LEVEL_1
 			bool "1"
 	endchoice
-	
+
 	config RE_BTN_LONG_PRESS_TIME_US
-		int "Long press timeout, us"
+		int "Default long press timeout, us"
 		default 500000
+		help
+		    Default long press threshold in microseconds. Can be overridden per-encoder at runtime
+		    via rotary_encoder_config_t.btn_long_press_time_us.
 
 	config RE_ACCELERATION_MIN_CUTOFF
-		int "Minimum Acceleration cutoff time (ms)"
+		int "Default minimum acceleration cutoff time (ms)"
 		default 200
 		help
-            At this time in milliseconds between rotary ticks we want to be at the minimum acceleration
+		    Default minimum acceleration cutoff time in milliseconds. At this interval between
+		    rotary ticks, minimum acceleration is applied. Can be overridden per-encoder at runtime
+		    via rotary_encoder_config_t.acceleration_min_cutoff_ms.
 
 	config RE_ACCELERATION_MAX_CUTOFF
-		int "Maximum Acceleration cutoff time (ms)"
+		int "Default maximum acceleration cutoff time (ms)"
 		default 4
 		help
-            At this time in milliseconds between rotary ticks we want to be at the maximum acceleration
+		    Default maximum acceleration cutoff time in milliseconds. At this interval between
+		    rotary ticks, maximum acceleration is applied. Can be overridden per-encoder at runtime
+		    via rotary_encoder_config_t.acceleration_max_cutoff_ms.
 endmenu
