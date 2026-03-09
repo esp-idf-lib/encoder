@@ -101,6 +101,7 @@ typedef struct
     uint32_t btn_long_press_time_us;     //!< Long press threshold in microseconds
     uint32_t acceleration_min_cutoff_ms; //!< Minimum acceleration cutoff time in milliseconds
     uint32_t acceleration_max_cutoff_ms; //!< Maximum acceleration cutoff time in milliseconds
+    uint32_t polling_interval_us;        //!< Polling interval in microseconds
     rotary_encoder_event_cb_t callback;  //!< Event callback (required)
     void *callback_ctx;                  //!< User context passed to callback
 } rotary_encoder_config_t;
@@ -120,6 +121,7 @@ typedef struct
     .btn_long_press_time_us = CONFIG_RE_BTN_LONG_PRESS_TIME_US, \
     .acceleration_min_cutoff_ms = CONFIG_RE_ACCELERATION_MIN_CUTOFF, \
     .acceleration_max_cutoff_ms = CONFIG_RE_ACCELERATION_MAX_CUTOFF, \
+    .polling_interval_us = CONFIG_RE_INTERVAL_US, \
     .callback = NULL, \
     .callback_ctx = NULL, \
 }
