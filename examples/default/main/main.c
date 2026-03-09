@@ -26,7 +26,7 @@
 static const char *TAG = "encoder_example";
 
 static QueueHandle_t event_queue;
-static rotary_encoder_t re;
+static rotary_encoder_handle_t re;
 
 static void encoder_event_handler(const rotary_encoder_event_t *event, void *ctx)
 {
@@ -36,20 +36,17 @@ static void encoder_event_handler(const rotary_encoder_event_t *event, void *ctx
 
 void test(void *arg)
 {
-    // Create event queue for rotary encoders
+    // Create queue for rotary encoder events
     event_queue = xQueueCreate(EV_QUEUE_LEN, sizeof(rotary_encoder_event_t));
 
-    // Setup rotary encoder library
-    ESP_ERROR_CHECK(rotary_encoder_init());
-
-    // Add one encoder
+    // Create an encoder
     rotary_encoder_config_t config = ROTARY_ENCODER_DEFAULT_CONFIG();
     config.pin_a = RE_A_GPIO;
     config.pin_b = RE_B_GPIO;
     config.pin_btn = RE_BTN_GPIO;
     config.callback = encoder_event_handler;
     config.callback_ctx = event_queue;
-    ESP_ERROR_CHECK(rotary_encoder_add(&config, &re));
+    ESP_ERROR_CHECK(rotary_encoder_create(&config, &re));
 
     rotary_encoder_event_t e;
     int32_t val = 0;
@@ -69,12 +66,12 @@ void test(void *arg)
                 break;
             case RE_ET_BTN_CLICKED:
                 ESP_LOGI(TAG, "Button clicked");
-                rotary_encoder_enable_acceleration(&re, 100);
+                rotary_encoder_enable_acceleration(re, 100);
                 ESP_LOGI(TAG, "Acceleration enabled");
                 break;
             case RE_ET_BTN_LONG_PRESSED:
                 ESP_LOGI(TAG, "Looooong pressed button");
-                rotary_encoder_disable_acceleration(&re);
+                rotary_encoder_disable_acceleration(re);
                 ESP_LOGI(TAG, "Acceleration disabled");
                 break;
             case RE_ET_CHANGED:
