@@ -41,7 +41,6 @@
 
 #include <esp_err.h>
 #include <driver/gpio.h>
-#include <freertos/FreeRTOS.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -69,23 +68,23 @@ typedef enum
     RE_ET_BTN_CLICKED       //!< Button was clicked
 } rotary_encoder_event_type_t;
 
-typedef struct rotary_encoder rotary_encoder_t;
+typedef struct rotary_encoder *rotary_encoder_handle_t;
 
 /**
  * Event
  */
 typedef struct
 {
-    rotary_encoder_event_type_t type;  //!< Event type
-    rotary_encoder_t *sender;          //!< Pointer to descriptor
+    rotary_encoder_event_type_t type;    //!< Event type
+    rotary_encoder_handle_t sender;  //!< Encoder handle
     int32_t diff;                      //!< Difference between new and old positions (only if type == RE_ET_CHANGED)
 } rotary_encoder_event_t;
 
 /**
  * Callback type for encoder events.
  *
- * The callback is invoked from the ESP timer task context while the
- * library mutex is held. It must not block or call back into the library.
+ * The callback is invoked from the ESP timer task context.
+ * It must not block or call back into the library.
  */
 typedef void (*rotary_encoder_event_cb_t)(const rotary_encoder_event_t *event, void *ctx);
 
@@ -125,76 +124,39 @@ typedef struct
     .callback_ctx = NULL, \
 }
 
-//Rotary encoder acceleration variables
-typedef struct
-{
-    int64_t last_time;
-    uint16_t coeff;
-} rotary_encoder_acceleration_t;
-
 /**
- * Rotary encoder descriptor
- */
-struct rotary_encoder
-{
-    gpio_num_t pin_a;                    //!< Encoder pin A
-    gpio_num_t pin_b;                    //!< Encoder pin B
-    gpio_num_t pin_btn;                  //!< Button pin, or GPIO_NUM_NC if unused
-    uint8_t btn_pressed_level;           //!< GPIO level when button is pressed (0 or 1)
-    uint32_t btn_dead_time_us;           //!< Button dead time in microseconds
-    uint32_t btn_long_press_time_us;     //!< Long press threshold in microseconds
-    uint32_t acceleration_min_cutoff_ms; //!< Minimum acceleration cutoff time in milliseconds
-    uint32_t acceleration_max_cutoff_ms; //!< Maximum acceleration cutoff time in milliseconds
-    rotary_encoder_event_cb_t callback;  //!< Event callback
-    void *callback_ctx;                  //!< User context passed to callback
-    uint8_t code;
-    uint16_t store;
-    size_t index;
-    uint64_t btn_pressed_time_us;
-    rotary_encoder_btn_state_t btn_state;
-    rotary_encoder_acceleration_t acceleration;
-};
-
-/**
- * @brief Initialize library
- *
- * @return `ESP_OK` on success
- */
-esp_err_t rotary_encoder_init(void);
-
-/**
- * @brief Add new rotary encoder
+ * @brief Create a new rotary encoder
  *
  * @param config Encoder configuration
- * @param[out] re Encoder handle, populated on success
+ * @param[out] handle Encoder handle, populated on success
  * @return `ESP_OK` on success
  */
-esp_err_t rotary_encoder_add(const rotary_encoder_config_t *config, rotary_encoder_t *re);
+esp_err_t rotary_encoder_create(const rotary_encoder_config_t *config, rotary_encoder_handle_t *handle);
 
 /**
- * @brief Remove previously added rotary encoder
+ * @brief Delete a rotary encoder
  *
- * @param re Encoder handle
+ * @param handle Encoder handle
  * @return `ESP_OK` on success
  */
-esp_err_t rotary_encoder_remove(rotary_encoder_t *re);
+esp_err_t rotary_encoder_delete(rotary_encoder_handle_t handle);
 
 /**
  * @brief Enable acceleration on the rotary encoder
  *
- * @param re Encoder handle
+ * @param handle Encoder handle
  * @param coeff Acceleration coefficient. Higher value means faster acceleration
  * @return esp_err_t
  */
-esp_err_t rotary_encoder_enable_acceleration(rotary_encoder_t *re, uint16_t coeff);
+esp_err_t rotary_encoder_enable_acceleration(rotary_encoder_handle_t handle, uint16_t coeff);
 
 /**
  * @brief Disable acceleration on the rotary encoder
  *
- * @param re Encoder handle
+ * @param handle Encoder handle
  * @return `ESP_OK` on success
  */
-esp_err_t rotary_encoder_disable_acceleration(rotary_encoder_t *re);
+esp_err_t rotary_encoder_disable_acceleration(rotary_encoder_handle_t handle);
 
 #ifdef __cplusplus
 }

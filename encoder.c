@@ -35,108 +35,129 @@
  * BSD Licensed as described in the file LICENSE
  */
 #include "encoder.h"
-#include <esp_log.h>
+#include <stdlib.h>
 #include <string.h>
-#include <freertos/semphr.h>
+#include <esp_log.h>
 #include <esp_timer.h>
-
-#define MUTEX_TIMEOUT 10
 
 #if defined(CONFIG_IDF_TARGET_ESP8266) && CONFIG_RE_INTERVAL_US < 10000
 #error Too small CONFIG_RE_INTERVAL_US! For ESP8266 it should be >= 10000
 #endif
 
 static const char *TAG = "encoder";
-static rotary_encoder_t *encs[CONFIG_RE_MAX] = { 0 };
 static const int8_t valid_states[] = { 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0 };
-static SemaphoreHandle_t mutex;
 
 #define GPIO_BIT(x) ((x) < 32 ? BIT(x) : ((uint64_t)(((uint64_t)1)<<(x))))
-#define CHECK(x) do { esp_err_t __; if ((__ = x) != ESP_OK) return __; } while (0)
 #define CHECK_ARG(VAL) do { if (!(VAL)) return ESP_ERR_INVALID_ARG; } while (0)
 #define PIN_VALID(p) ((p) >= 0 && (p) < GPIO_NUM_MAX)
 
-inline static void read_encoder(rotary_encoder_t *re)
+typedef struct
+{
+    int64_t last_time;
+    uint16_t coeff;
+} rotary_encoder_acceleration_t;
+
+struct rotary_encoder
+{
+    gpio_num_t pin_a;                    //!< Encoder pin A
+    gpio_num_t pin_b;                    //!< Encoder pin B
+    gpio_num_t pin_btn;                  //!< Button pin, or GPIO_NUM_NC if unused
+    uint8_t btn_pressed_level;           //!< GPIO level when button is pressed (0 or 1)
+    uint32_t btn_dead_time_us;           //!< Button dead time in microseconds
+    uint32_t btn_long_press_time_us;     //!< Long press threshold in microseconds
+    uint32_t acceleration_min_cutoff_ms; //!< Minimum acceleration cutoff time in milliseconds
+    uint32_t acceleration_max_cutoff_ms; //!< Maximum acceleration cutoff time in milliseconds
+    rotary_encoder_event_cb_t callback;  //!< Event callback
+    void *callback_ctx;                  //!< User context passed to callback
+    esp_timer_handle_t timer;
+    uint8_t code;
+    uint16_t store;
+    uint64_t btn_pressed_time_us;
+    rotary_encoder_btn_state_t btn_state;
+    rotary_encoder_acceleration_t acceleration;
+};
+
+inline static void read_encoder(rotary_encoder_handle_t handle)
 {
     rotary_encoder_event_t ev =
     {
-        .sender = re
+        .sender = handle
     };
 
-    if (PIN_VALID(re->pin_btn))
+    if (PIN_VALID(handle->pin_btn))
         do
         {
-            if (re->btn_state == RE_BTN_PRESSED && re->btn_pressed_time_us < re->btn_dead_time_us)
+            if (handle->btn_state == RE_BTN_PRESSED && handle->btn_pressed_time_us < handle->btn_dead_time_us)
             {
                 // Dead time
-                re->btn_pressed_time_us += CONFIG_RE_INTERVAL_US;
+                handle->btn_pressed_time_us += CONFIG_RE_INTERVAL_US;
                 break;
             }
 
             // read button state
-            if (gpio_get_level(re->pin_btn) == re->btn_pressed_level)
+            if (gpio_get_level(handle->pin_btn) == handle->btn_pressed_level)
             {
-                if (re->btn_state == RE_BTN_RELEASED)
+                if (handle->btn_state == RE_BTN_RELEASED)
                 {
                     // first press
-                    re->btn_state = RE_BTN_PRESSED;
-                    re->btn_pressed_time_us = 0;
+                    handle->btn_state = RE_BTN_PRESSED;
+                    handle->btn_pressed_time_us = 0;
                     ev.type = RE_ET_BTN_PRESSED;
-                    re->callback(&ev, re->callback_ctx);
+                    handle->callback(&ev, handle->callback_ctx);
                     break;
                 }
 
-                re->btn_pressed_time_us += CONFIG_RE_INTERVAL_US;
+                handle->btn_pressed_time_us += CONFIG_RE_INTERVAL_US;
 
-                if (re->btn_state == RE_BTN_PRESSED && re->btn_pressed_time_us >= re->btn_long_press_time_us)
+                if (handle->btn_state == RE_BTN_PRESSED && handle->btn_pressed_time_us >= handle->btn_long_press_time_us)
                 {
                     // Long press
-                    re->btn_state = RE_BTN_LONG_PRESSED;
+                    handle->btn_state = RE_BTN_LONG_PRESSED;
                     ev.type = RE_ET_BTN_LONG_PRESSED;
-                    re->callback(&ev, re->callback_ctx);
+                    handle->callback(&ev, handle->callback_ctx);
                 }
             }
-            else if (re->btn_state != RE_BTN_RELEASED)
+            else if (handle->btn_state != RE_BTN_RELEASED)
             {
-                bool clicked = re->btn_state == RE_BTN_PRESSED;
+                bool clicked = handle->btn_state == RE_BTN_PRESSED;
                 // released
-                re->btn_state = RE_BTN_RELEASED;
+                handle->btn_state = RE_BTN_RELEASED;
                 ev.type = RE_ET_BTN_RELEASED;
-                re->callback(&ev, re->callback_ctx);
+                handle->callback(&ev, handle->callback_ctx);
                 if (clicked)
                 {
                     ev.type = RE_ET_BTN_CLICKED;
-                    re->callback(&ev, re->callback_ctx);
+                    handle->callback(&ev, handle->callback_ctx);
                 }
             }
         }
         while (0);
 
-    re->code <<= 2;
-    re->code |= gpio_get_level(re->pin_a);
-    re->code |= gpio_get_level(re->pin_b) << 1;
-    re->code &= 0xf;
+    handle->code <<= 2;
+    handle->code |= gpio_get_level(handle->pin_a);
+    handle->code |= gpio_get_level(handle->pin_b) << 1;
+    handle->code &= 0xf;
 
-    if (!valid_states[re->code])
+    if (!valid_states[handle->code])
         return;
 
     int8_t inc = 0;
 
-    re->store = (re->store << 4) | re->code;
+    handle->store = (handle->store << 4) | handle->code;
 
-    if ((re->store == 0xe817) || (re->store == 0x17e8)) inc = 1;
-    if ((re->store == 0xd42b) || (re->store == 0x2bd4)) inc = -1;
+    if ((handle->store == 0xe817) || (handle->store == 0x17e8)) inc = 1;
+    if ((handle->store == 0xd42b) || (handle->store == 0x2bd4)) inc = -1;
 
     if (inc)
     {
         ev.diff = inc;
-        if (re->acceleration.coeff > 1)
+        if (handle->acceleration.coeff > 1)
         {
             int64_t nowMicros = esp_timer_get_time();
-            uint32_t accelerationMinCutoffMillis = re->acceleration_min_cutoff_ms;
-            uint32_t accelerationMaxCutoffMillis = re->acceleration_max_cutoff_ms;
-            uint32_t millisAfterLastMotion = (nowMicros - re->acceleration.last_time) / 1000u;
-            re->acceleration.last_time = nowMicros;
+            uint32_t accelerationMinCutoffMillis = handle->acceleration_min_cutoff_ms;
+            uint32_t accelerationMaxCutoffMillis = handle->acceleration_max_cutoff_ms;
+            uint32_t millisAfterLastMotion = (nowMicros - handle->acceleration.last_time) / 1000u;
+            handle->acceleration.last_time = nowMicros;
 
             if (millisAfterLastMotion < accelerationMinCutoffMillis)
             {
@@ -144,80 +165,29 @@ inline static void read_encoder(rotary_encoder_t *re)
                 {
                     millisAfterLastMotion = accelerationMaxCutoffMillis; // limit to maximum acceleration
                 }
-                ev.diff = inc * ((int32_t)(re->acceleration.coeff / millisAfterLastMotion) == 0 ? 1 : (int32_t)(re->acceleration.coeff / millisAfterLastMotion));
+                ev.diff = inc * ((int32_t)(handle->acceleration.coeff / millisAfterLastMotion) == 0 ? 1 : (int32_t)(handle->acceleration.coeff / millisAfterLastMotion));
             }
         }
 
-        re->store = 0;
+        handle->store = 0;
         ev.type = RE_ET_CHANGED;
-        re->callback(&ev, re->callback_ctx);
+        handle->callback(&ev, handle->callback_ctx);
     }
 }
 
-static void timer_handler(void *arg)
+static void encoder_timer_handler(void *arg)
 {
-    if (!xSemaphoreTake(mutex, 0))
-        return;
-
-    for (size_t i = 0; i < CONFIG_RE_MAX; i++)
-        if (encs[i])
-            read_encoder(encs[i]);
-
-    xSemaphoreGive(mutex);
+    read_encoder((rotary_encoder_handle_t)arg);
 }
 
-static const esp_timer_create_args_t timer_args =
+esp_err_t rotary_encoder_create(const rotary_encoder_config_t *config, rotary_encoder_handle_t *handle)
 {
-    .name = "__encoder__",
-    .arg = NULL,
-    .callback = timer_handler,
-    .dispatch_method = ESP_TIMER_TASK
-};
+    CHECK_ARG(handle && config && config->callback);
 
-static esp_timer_handle_t timer;
-
-esp_err_t rotary_encoder_init(void)
-{
-    mutex = xSemaphoreCreateMutex();
-    if (!mutex)
-    {
-        ESP_LOGE(TAG, "Failed to create mutex");
+    rotary_encoder_handle_t re = calloc(1, sizeof(struct rotary_encoder));
+    if (!re)
         return ESP_ERR_NO_MEM;
-    }
 
-    CHECK(esp_timer_create(&timer_args, &timer));
-    CHECK(esp_timer_start_periodic(timer, CONFIG_RE_INTERVAL_US));
-
-    ESP_LOGI(TAG, "Initialization complete, timer interval: %dms", CONFIG_RE_INTERVAL_US / 1000);
-    return ESP_OK;
-}
-
-esp_err_t rotary_encoder_add(const rotary_encoder_config_t *config, rotary_encoder_t *re)
-{
-    CHECK_ARG(re && config && config->callback);
-    if (!xSemaphoreTake(mutex, MUTEX_TIMEOUT))
-    {
-        ESP_LOGE(TAG, "Failed to take mutex");
-        return ESP_ERR_INVALID_STATE;
-    }
-
-    size_t index = CONFIG_RE_MAX;
-    for (size_t i = 0; i < CONFIG_RE_MAX; i++)
-        if (!encs[i])
-        {
-            index = i;
-            break;
-        }
-    if (index == CONFIG_RE_MAX)
-    {
-        ESP_LOGE(TAG, "Too many encoders");
-        xSemaphoreGive(mutex);
-        return ESP_ERR_NO_MEM;
-    }
-
-    // Initialize handle and copy config
-    memset(re, 0, sizeof(*re));
-    re->index = index;
     re->pin_a = config->pin_a;
     re->pin_b = config->pin_b;
     re->pin_btn = config->pin_btn;
@@ -228,6 +198,15 @@ esp_err_t rotary_encoder_add(const rotary_encoder_config_t *config, rotary_encod
     re->acceleration_max_cutoff_ms = config->acceleration_max_cutoff_ms;
     re->callback = config->callback;
     re->callback_ctx = config->callback_ctx;
+
+#if defined(CONFIG_IDF_TARGET_ESP8266)
+    if (re->polling_interval_us < 10000)
+    {
+        ESP_LOGE(TAG, "Polling interval too small for ESP8266, must be >= 10000us");
+        free(re);
+        return ESP_ERR_INVALID_ARG;
+    }
+#endif
 
     // setup GPIO
     gpio_config_t io_conf;
@@ -247,51 +226,67 @@ esp_err_t rotary_encoder_add(const rotary_encoder_config_t *config, rotary_encod
     io_conf.pin_bit_mask = GPIO_BIT(re->pin_a) | GPIO_BIT(re->pin_b);
     if (PIN_VALID(re->pin_btn))
         io_conf.pin_bit_mask |= GPIO_BIT(re->pin_btn);
-    CHECK(gpio_config(&io_conf));
 
-    // Register encoder after full initialization so timer_handler never sees a partial state
-    encs[index] = re;
-
-    xSemaphoreGive(mutex);
-
-    ESP_LOGI(TAG, "Added rotary encoder %d, A: %d, B: %d, BTN: %d", re->index, re->pin_a, re->pin_b, re->pin_btn);
-    return ESP_OK;
-}
-
-esp_err_t rotary_encoder_remove(rotary_encoder_t *re)
-{
-    CHECK_ARG(re);
-    if (!xSemaphoreTake(mutex, MUTEX_TIMEOUT))
+    esp_err_t err = gpio_config(&io_conf);
+    if (err != ESP_OK)
     {
-        ESP_LOGE(TAG, "Failed to take mutex");
-        return ESP_ERR_INVALID_STATE;
+        free(re);
+        return err;
     }
 
-    for (size_t i = 0; i < CONFIG_RE_MAX; i++)
-        if (encs[i] == re)
-        {
-            encs[i] = NULL;
-            ESP_LOGI(TAG, "Removed rotary encoder %d", i);
-            xSemaphoreGive(mutex);
-            return ESP_OK;
-        }
+    // Create and start per-encoder timer
+    const esp_timer_create_args_t timer_args =
+    {
+        .name = "__encoder__",
+        .arg = re,
+        .callback = encoder_timer_handler,
+        .dispatch_method = ESP_TIMER_TASK
+    };
 
-    ESP_LOGE(TAG, "Unknown encoder");
-    xSemaphoreGive(mutex);
-    return ESP_ERR_NOT_FOUND;
-}
+    err = esp_timer_create(&timer_args, &re->timer);
+    if (err != ESP_OK)
+    {
+        free(re);
+        return err;
+    }
 
-esp_err_t rotary_encoder_enable_acceleration(rotary_encoder_t *re, uint16_t coeff)
-{
-    CHECK_ARG(re);
-    re->acceleration.coeff = coeff;
-    re->acceleration.last_time = esp_timer_get_time();
+    err = esp_timer_start_periodic(re->timer, CONFIG_RE_INTERVAL_US);
+    if (err != ESP_OK)
+    {
+        esp_timer_delete(re->timer);
+        free(re);
+        return err;
+    }
+
+    ESP_LOGI(TAG, "Created rotary encoder, A: %d, B: %d, BTN: %d", re->pin_a, re->pin_b, re->pin_btn);
+    *handle = re;
+
     return ESP_OK;
 }
 
-esp_err_t rotary_encoder_disable_acceleration(rotary_encoder_t *re)
+esp_err_t rotary_encoder_delete(rotary_encoder_handle_t handle)
 {
-    CHECK_ARG(re);
-    re->acceleration.coeff = 0;
+    CHECK_ARG(handle);
+
+    esp_timer_stop(handle->timer);
+    esp_timer_delete(handle->timer);
+
+    ESP_LOGI(TAG, "Deleted rotary encoder, A: %d, B: %d, BTN: %d", handle->pin_a, handle->pin_b, handle->pin_btn);
+    free(handle);
+    return ESP_OK;
+}
+
+esp_err_t rotary_encoder_enable_acceleration(rotary_encoder_handle_t handle, uint16_t coeff)
+{
+    CHECK_ARG(handle);
+    handle->acceleration.coeff = coeff;
+    handle->acceleration.last_time = esp_timer_get_time();
+    return ESP_OK;
+}
+
+esp_err_t rotary_encoder_disable_acceleration(rotary_encoder_handle_t handle)
+{
+    CHECK_ARG(handle);
+    handle->acceleration.coeff = 0;
     return ESP_OK;
 }

@@ -1,9 +1,5 @@
 menu "Rotary encoders"
 
-	config RE_MAX
-		int "Maximum number of rotary encoders"
-		default 1
-
 	config RE_INTERVAL_US
 		int "Polling interval, us"
 		default 10000 if IDF_TARGET_ESP8266
