@@ -224,39 +224,29 @@ esp_err_t rotary_encoder_create(const rotary_encoder_config_t *config, rotary_en
     }
 #endif
 
-    // setup GPIO
-    gpio_config_t io_conf;
-    memset(&io_conf, 0, sizeof(gpio_config_t));
-    io_conf.mode = GPIO_MODE_INPUT;
-    if (config->enable_internal_pullup)
+    // setup GPIO pins as inputs
+    gpio_num_t pins[] = { re->pin_a, re->pin_b, re->pin_btn };
+    int num_pins = PIN_VALID(re->pin_btn) ? 3 : 2;
+    esp_err_t err;
+    for (int i = 0; i < num_pins; i++)
     {
-        if (re->btn_pressed_level == 0)
+        err = gpio_set_direction(pins[i], GPIO_MODE_INPUT);
+        if (err != ESP_OK)
         {
-            io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
-            io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+            vSemaphoreDelete(re->lock);
+            free(re);
+            return err;
         }
-        else
+        if (config->enable_internal_pullup)
         {
-            io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
-            io_conf.pull_down_en = GPIO_PULLDOWN_ENABLE;
+            err = gpio_set_pull_mode(pins[i], GPIO_PULLUP_ONLY);
+            if (err != ESP_OK)
+            {
+                vSemaphoreDelete(re->lock);
+                free(re);
+                return err;
+            }
         }
-    }
-    else
-    {
-        io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
-        io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
-    }
-    io_conf.intr_type = GPIO_INTR_DISABLE;
-    io_conf.pin_bit_mask = GPIO_BIT(re->pin_a) | GPIO_BIT(re->pin_b);
-    if (PIN_VALID(re->pin_btn))
-        io_conf.pin_bit_mask |= GPIO_BIT(re->pin_btn);
-
-    esp_err_t err = gpio_config(&io_conf);
-    if (err != ESP_OK)
-    {
-        vSemaphoreDelete(re->lock);
-        free(re);
-        return err;
     }
 
     // Create and start per-encoder timer

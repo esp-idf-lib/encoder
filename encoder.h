@@ -96,8 +96,18 @@ typedef struct
     gpio_num_t pin_a;                    //!< Encoder pin A
     gpio_num_t pin_b;                    //!< Encoder pin B
     gpio_num_t pin_btn;                  //!< Button pin, or GPIO_NUM_NC if unused
-    uint8_t btn_pressed_level;           //!< GPIO level when button is pressed (0 or 1)
-    bool enable_internal_pullup;         //!< Enable internal pull-up/pull-down resistors on GPIO pins
+    uint8_t btn_pressed_level;           //!< GPIO level when button is pressed (0 or 1).
+    //!< When set to 1, the button pin may need a pull-down
+    //!< resistor, either external or set via \c gpio_set_pull_mode()
+    //!< before creating the encoder, as \c enable_internal_pullup
+    //!< only enables pull-ups.
+    bool enable_internal_pullup;         //!< Enable internal pull-up resistors on all encoder and
+    //!< button GPIO pins. Pull-ups are always used, which is
+    //!< correct for encoders wired with common to ground. When
+    //!< \c btn_pressed_level is 1, the button pin may need a
+    //!< pull-down instead — use an external resistor or call
+    //!< \c gpio_set_pull_mode() before creating the encoder.
+    //!< When false, pull resistors are left unchanged.
     uint32_t btn_dead_time_us;           //!< Button dead time in microseconds
     uint32_t btn_long_press_time_us;     //!< Long press threshold in microseconds
     uint32_t acceleration_threshold_ms;  //!< Acceleration threshold in milliseconds (acceleration starts below this interval)
