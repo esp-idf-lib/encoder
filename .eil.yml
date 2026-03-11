@@ -1,7 +1,7 @@
 ---
 name: encoder
 description: HW timer-based driver for incremental rotary encoders
-version: 3.0.1
+version: 3.0.2
 groups:
   - input
 code_owners:
@@ -27,3 +27,5 @@ license: BSD-3
 copyrights:
   - name: UncleRus
     year: 2019
+  - name: cleishm
+    year: 2026
