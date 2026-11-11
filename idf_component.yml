@@ -1,18 +1,7 @@
 ---
-version: 3.0.2
+version: 3.0.3
 description: HW timer-based driver for incremental rotary encoders
-license: BSD-3
-targets:
-  - esp32
-  - esp32c2
-  - esp32c3
-  - esp32c5
-  - esp32c6
-  - esp32c61
-  - esp32h2
-  - esp32p4
-  - esp32s2
-  - esp32s3
+license: BSD-3-Clause
 dependencies: {}
 maintainers:
   - Ruslan V. Uss (@UncleRus) <unclerus@gmail.com>
