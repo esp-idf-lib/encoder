@@ -1,7 +1,7 @@
 ---
 version: 3.0.3
 description: HW timer-based driver for incremental rotary encoders
-license: BSD-3
+license: BSD-3-Clause
 dependencies: {}
 maintainers:
   - Ruslan V. Uss (@UncleRus) <unclerus@gmail.com>
