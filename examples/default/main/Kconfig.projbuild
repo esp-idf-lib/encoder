@@ -1,0 +1,30 @@
+menu "Example configuration"
+
+    config EXAMPLE_RE_A_GPIO
+        int "GPIO number of the encoder pin A"
+        range 0 54
+        default 16
+        help
+            The GPIO connected to the pin A of the encoder. The encoder has no
+            direction, so the pins A and B can be swapped, but they must differ.
+
+    config EXAMPLE_RE_B_GPIO
+        int "GPIO number of the encoder pin B"
+        range 0 54
+        default 17
+        help
+            The GPIO connected to the pin B of the encoder. The pins A and B
+            must differ.
+
+    config EXAMPLE_RE_BTN_GPIO
+        int "GPIO number of the encoder button"
+        range -1 54
+        default 18
+        help
+            The GPIO connected to the push button of the encoder, if any. The
+            driver reads the button as active low, so connect the other side of
+            the button to ground.
+
+            Set to -1 if the encoder has no button.
+
+endmenu

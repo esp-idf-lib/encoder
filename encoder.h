@@ -85,13 +85,25 @@ typedef struct
 /**
  * Callback type for encoder events.
  *
- * The callback is invoked from the ESP timer task context.
- * It must not block or call back into the library.
+ * The callback runs in the task of the esp_timer, with the lock of the encoder
+ * held, so it has to return quickly: a slow callback delays every other timer
+ * in the system, not only this encoder.
+ *
+ * It must not call rotary_encoder_delete(), rotary_encoder_enable_acceleration()
+ * or rotary_encoder_disable_acceleration() for the same encoder. Deleting frees
+ * the handle the callback is running on, and the other two try to take the lock
+ * that the callback already holds. Pass the event to another task instead,
+ * through a queue or a task notification.
  */
 typedef void (*rotary_encoder_event_cb_t)(const rotary_encoder_event_t *event, void *ctx);
 
 /**
  * Per-encoder configuration
+ *
+ * The polling interval is not a part of the configuration: it is fixed at
+ * build time by \c CONFIG_RE_INTERVAL_US, because the driver counts the time
+ * of a button press in polling intervals and a per-encoder value would make
+ * that accounting depend on a field the caller can change at will.
  */
 typedef struct
 {
@@ -114,7 +126,6 @@ typedef struct
     uint32_t btn_long_press_time_us;     //!< Long press threshold in microseconds
     uint32_t acceleration_threshold_ms;  //!< Acceleration threshold in milliseconds (acceleration starts below this interval)
     uint32_t acceleration_cap_ms;        //!< Acceleration cap in milliseconds (minimum interval, limits max acceleration)
-    uint32_t polling_interval_us;        //!< Polling interval in microseconds
     rotary_encoder_event_cb_t callback;  //!< Event callback (required)
     void *callback_ctx;                  //!< User context passed to callback
 } rotary_encoder_config_t;
@@ -137,7 +148,6 @@ typedef struct
     .btn_long_press_time_us = CONFIG_RE_BTN_LONG_PRESS_TIME_US, \
     .acceleration_threshold_ms = CONFIG_RE_ACCELERATION_THRESHOLD, \
     .acceleration_cap_ms = CONFIG_RE_ACCELERATION_CAP, \
-    .polling_interval_us = CONFIG_RE_INTERVAL_US, \
     .callback = NULL, \
     .callback_ctx = NULL, \
 }
@@ -146,16 +156,38 @@ typedef struct
  * @brief Create a new rotary encoder
  *
  * @param config Encoder configuration
- * @param[out] handle Encoder handle, populated on success
+ * @param[out] handle Encoder handle, populated on success and set to NULL on failure
+ *
  * @return `ESP_OK` on success
+ *         `ESP_ERR_INVALID_ARG` if the configuration is invalid: no callback,
+ *         an invalid or repeated pin, a button level other than 0 or 1, or an
+ *         acceleration cap that is zero or larger than the threshold
+ *         `ESP_ERR_NO_MEM` if there is no memory for the encoder or its lock
+ *         the error code of the GPIO or timer that could not be set up
  */
 esp_err_t rotary_encoder_create(const rotary_encoder_config_t *config, rotary_encoder_handle_t *handle);
 
 /**
  * @brief Delete a rotary encoder
  *
+ * The timer is stopped and the handle is freed, and the GPIO pins are released
+ * back to the floating input state.
+ *
+ * With ESP-IDF 6.1 and newer the function waits for an event callback that is
+ * already running, so the handle is never freed under the callback. Older
+ * versions have no such way to wait: the timer stops dispatching callbacks and
+ * the lock orders the callbacks that have started, but a callback that the
+ * timer task has dispatched and that has not taken the lock yet can still run
+ * after the handle is freed. On those versions delete the encoder only when the
+ * events are no longer expected, for example after the buttons have been idle
+ * for a polling interval.
+ *
  * @param handle Encoder handle
+ *
  * @return `ESP_OK` on success
+ *         `ESP_ERR_INVALID_ARG` if the handle is NULL
+ *         `ESP_ERR_INVALID_STATE` if called from the event callback of the same
+ *         encoder
  */
 esp_err_t rotary_encoder_delete(rotary_encoder_handle_t handle);
 
@@ -163,8 +195,13 @@ esp_err_t rotary_encoder_delete(rotary_encoder_handle_t handle);
  * @brief Enable acceleration on the rotary encoder
  *
  * @param handle Encoder handle
- * @param coeff Acceleration coefficient. Higher value means faster acceleration
- * @return esp_err_t
+ * @param coeff Acceleration coefficient. Higher value means faster acceleration,
+ *              0 and 1 disable it
+ *
+ * @return `ESP_OK` on success
+ *         `ESP_ERR_INVALID_ARG` if the handle is NULL
+ *         `ESP_ERR_INVALID_STATE` if called from the event callback of the same
+ *         encoder
  */
 esp_err_t rotary_encoder_enable_acceleration(rotary_encoder_handle_t handle, uint16_t coeff);
 
@@ -172,7 +209,11 @@ esp_err_t rotary_encoder_enable_acceleration(rotary_encoder_handle_t handle, uin
  * @brief Disable acceleration on the rotary encoder
  *
  * @param handle Encoder handle
+ *
  * @return `ESP_OK` on success
+ *         `ESP_ERR_INVALID_ARG` if the handle is NULL
+ *         `ESP_ERR_INVALID_STATE` if called from the event callback of the same
+ *         encoder
  */
 esp_err_t rotary_encoder_disable_acceleration(rotary_encoder_handle_t handle);
 

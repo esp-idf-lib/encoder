@@ -38,22 +38,23 @@
  */
 #include "encoder.h"
 #include <stdlib.h>
-#include <string.h>
+#include <esp_idf_version.h>
 #include <esp_log.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
-
-#if defined(CONFIG_IDF_TARGET_ESP8266) && CONFIG_RE_INTERVAL_US < 10000
-#error Too small CONFIG_RE_INTERVAL_US! For ESP8266 it should be >= 10000
-#endif
+#include <freertos/task.h>
 
 static const char *TAG = "encoder";
 static const int8_t valid_states[] = { 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0 };
 
-#define GPIO_BIT(x) ((x) < 32 ? BIT(x) : ((uint64_t)(((uint64_t)1)<<(x))))
 #define CHECK_ARG(VAL) do { if (!(VAL)) return ESP_ERR_INVALID_ARG; } while (0)
 #define PIN_VALID(p) ((p) >= 0 && (p) < GPIO_NUM_MAX)
+
+// The polling interval is a build time constant, not a part of the
+// configuration: the button timings are counted in polling intervals, so the
+// value has to be the same for the whole run and cannot be changed per encoder
+#define RE_POLLING_INTERVAL_US ((uint32_t)CONFIG_RE_INTERVAL_US)
 
 typedef struct
 {
@@ -71,7 +72,6 @@ struct rotary_encoder
     uint32_t btn_long_press_time_us;     //!< Long press threshold in microseconds
     uint32_t acceleration_threshold_ms;  //!< Acceleration threshold in milliseconds (acceleration starts below this interval)
     uint32_t acceleration_cap_ms;        //!< Acceleration cap in milliseconds (minimum interval, limits max acceleration)
-    uint32_t polling_interval_us;        //!< Polling interval in microseconds
     rotary_encoder_event_cb_t callback;  //!< Event callback
     void *callback_ctx;                  //!< User context passed to callback
     esp_timer_handle_t timer;
@@ -81,6 +81,7 @@ struct rotary_encoder
     uint64_t btn_pressed_time_us;
     rotary_encoder_btn_state_t btn_state;
     rotary_encoder_acceleration_t acceleration;
+    TaskHandle_t callback_task;          //!< Task the callback runs in, NULL when idle
 };
 
 inline static void read_encoder(rotary_encoder_handle_t handle)
@@ -96,7 +97,7 @@ inline static void read_encoder(rotary_encoder_handle_t handle)
             if (handle->btn_state == RE_BTN_PRESSED && handle->btn_pressed_time_us < handle->btn_dead_time_us)
             {
                 // Dead time
-                handle->btn_pressed_time_us += handle->polling_interval_us;
+                handle->btn_pressed_time_us += RE_POLLING_INTERVAL_US;
                 break;
             }
 
@@ -113,7 +114,7 @@ inline static void read_encoder(rotary_encoder_handle_t handle)
                     break;
                 }
 
-                handle->btn_pressed_time_us += handle->polling_interval_us;
+                handle->btn_pressed_time_us += RE_POLLING_INTERVAL_US;
 
                 if (handle->btn_state == RE_BTN_PRESSED && handle->btn_pressed_time_us >= handle->btn_long_press_time_us)
                 {
@@ -171,6 +172,12 @@ inline static void read_encoder(rotary_encoder_handle_t handle)
                 {
                     millisAfterLastMotion = accelerationCapMs; // limit to maximum acceleration
                 }
+                if (!millisAfterLastMotion)
+                {
+                    // Two detents landed in the same millisecond, which happens
+                    // when the timer task catches up after a delay
+                    millisAfterLastMotion = 1;
+                }
                 ev.diff = inc * ((int32_t)(handle->acceleration.coeff / millisAfterLastMotion) == 0 ? 1 : (int32_t)(handle->acceleration.coeff / millisAfterLastMotion));
             }
         }
@@ -181,17 +188,47 @@ inline static void read_encoder(rotary_encoder_handle_t handle)
     }
 }
 
+static bool is_callback_task(rotary_encoder_handle_t handle)
+{
+    return handle->callback_task && handle->callback_task == xTaskGetCurrentTaskHandle();
+}
+
 static void encoder_timer_handler(void *arg)
 {
     rotary_encoder_handle_t handle = (rotary_encoder_handle_t)arg;
+
+    // Remember the task, so the library can tell its own callback from any
+    // other caller and refuse the calls that would deadlock or free the handle
+    // under the callback
+    handle->callback_task = xTaskGetCurrentTaskHandle();
     xSemaphoreTake(handle->lock, portMAX_DELAY);
     read_encoder(handle);
     xSemaphoreGive(handle->lock);
+    handle->callback_task = NULL;
+}
+
+static void release_pins(gpio_num_t *pins, int count)
+{
+    for (int i = 0; i < count; i++)
+    {
+        gpio_set_pull_mode(pins[i], GPIO_FLOATING);
+        gpio_set_direction(pins[i], GPIO_MODE_INPUT);
+    }
 }
 
 esp_err_t rotary_encoder_create(const rotary_encoder_config_t *config, rotary_encoder_handle_t *handle)
 {
     CHECK_ARG(handle && config && config->callback);
+    CHECK_ARG(PIN_VALID(config->pin_a) && PIN_VALID(config->pin_b));
+    CHECK_ARG(config->pin_a != config->pin_b);
+    CHECK_ARG(!PIN_VALID(config->pin_btn)
+              || (config->pin_btn != config->pin_a && config->pin_btn != config->pin_b));
+    CHECK_ARG(config->btn_pressed_level <= 1);
+    CHECK_ARG(config->acceleration_cap_ms > 0);
+    CHECK_ARG(!config->acceleration_threshold_ms
+              || config->acceleration_cap_ms <= config->acceleration_threshold_ms);
+
+    *handle = NULL;
 
     rotary_encoder_handle_t re = calloc(1, sizeof(struct rotary_encoder));
     if (!re)
@@ -205,7 +242,6 @@ esp_err_t rotary_encoder_create(const rotary_encoder_config_t *config, rotary_en
     re->btn_long_press_time_us = config->btn_long_press_time_us;
     re->acceleration_threshold_ms = config->acceleration_threshold_ms;
     re->acceleration_cap_ms = config->acceleration_cap_ms;
-    re->polling_interval_us = config->polling_interval_us;
     re->callback = config->callback;
     re->callback_ctx = config->callback_ctx;
 
@@ -216,62 +252,46 @@ esp_err_t rotary_encoder_create(const rotary_encoder_config_t *config, rotary_en
         return ESP_ERR_NO_MEM;
     }
 
-#if defined(CONFIG_IDF_TARGET_ESP8266)
-    if (re->polling_interval_us < 10000)
-    {
-        ESP_LOGE(TAG, "Polling interval too small for ESP8266, must be >= 10000us");
-        vSemaphoreDelete(re->lock);
-        free(re);
-        return ESP_ERR_INVALID_ARG;
-    }
-#endif
-
-    // setup GPIO pins as inputs
+    // Set up the GPIO pins as inputs. The pins are configured one by one, so
+    // remember how many of them were taken, to release them if one of the
+    // following calls fails and the pins would otherwise stay configured
     gpio_num_t pins[] = { re->pin_a, re->pin_b, re->pin_btn };
-    int num_pins = PIN_VALID(re->pin_btn) ? 3 : 2;
-    esp_err_t err;
-    for (int i = 0; i < num_pins; i++)
+    const int num_pins = PIN_VALID(re->pin_btn) ? 3 : 2;
+    int configured = 0;
+    esp_err_t err = ESP_OK;
+
+    for (int i = 0; i < num_pins && err == ESP_OK; i++)
     {
         err = gpio_set_direction(pins[i], GPIO_MODE_INPUT);
-        if (err != ESP_OK)
-        {
-            vSemaphoreDelete(re->lock);
-            free(re);
-            return err;
-        }
-        if (config->enable_internal_pullup)
-        {
+        if (err == ESP_OK && config->enable_internal_pullup)
             err = gpio_set_pull_mode(pins[i], GPIO_PULLUP_ONLY);
+        if (err == ESP_OK)
+            configured++;
+    }
+
+    if (err == ESP_OK)
+    {
+        const esp_timer_create_args_t timer_args =
+        {
+            .name = "__encoder__",
+            .arg = re,
+            .callback = encoder_timer_handler,
+            .dispatch_method = ESP_TIMER_TASK
+        };
+
+        err = esp_timer_create(&timer_args, &re->timer);
+        if (err == ESP_OK)
+        {
+            err = esp_timer_start_periodic(re->timer, RE_POLLING_INTERVAL_US);
             if (err != ESP_OK)
-            {
-                vSemaphoreDelete(re->lock);
-                free(re);
-                return err;
-            }
+                esp_timer_delete(re->timer);
         }
     }
 
-    // Create and start per-encoder timer
-    const esp_timer_create_args_t timer_args =
-    {
-        .name = "__encoder__",
-        .arg = re,
-        .callback = encoder_timer_handler,
-        .dispatch_method = ESP_TIMER_TASK
-    };
-
-    err = esp_timer_create(&timer_args, &re->timer);
     if (err != ESP_OK)
     {
-        vSemaphoreDelete(re->lock);
-        free(re);
-        return err;
-    }
-
-    err = esp_timer_start_periodic(re->timer, re->polling_interval_us);
-    if (err != ESP_OK)
-    {
-        esp_timer_delete(re->timer);
+        ESP_LOGE(TAG, "Could not create the encoder: %s", esp_err_to_name(err));
+        release_pins(pins, configured);
         vSemaphoreDelete(re->lock);
         free(re);
         return err;
@@ -287,13 +307,38 @@ esp_err_t rotary_encoder_delete(rotary_encoder_handle_t handle)
 {
     CHECK_ARG(handle);
 
+    // Deleting the encoder from its own callback would free the handle that
+    // the callback is still running on
+    if (is_callback_task(handle))
+        return ESP_ERR_INVALID_STATE;
+
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 1, 0)
+    // Stopping the timer is not enough: the timer task dispatches the callback
+    // after it releases its own lock, so the callback may have been dispatched
+    // and still be waiting for our lock. The blocking stop waits for it
+    esp_err_t err = esp_timer_stop_blocking(handle->timer, portMAX_DELAY);
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE)
+    {
+        ESP_LOGE(TAG, "Could not stop the timer: %s", esp_err_to_name(err));
+        return err;
+    }
+#else
+    // ESP-IDF before 6.1 cannot wait for the callback: the timer stops
+    // dispatching new ones and the lock orders the callbacks that have already
+    // started, but a callback that was dispatched and has not taken the lock
+    // yet can still run after the handle is freed
     esp_timer_stop(handle->timer);
+#endif
+
     esp_timer_delete(handle->timer);
 
-    // Wait for any in-flight callback to complete before freeing
+    // Order the callbacks that have started on the older ESP-IDF versions
     xSemaphoreTake(handle->lock, portMAX_DELAY);
     xSemaphoreGive(handle->lock);
     vSemaphoreDelete(handle->lock);
+
+    gpio_num_t pins[] = { handle->pin_a, handle->pin_b, handle->pin_btn };
+    release_pins(pins, PIN_VALID(handle->pin_btn) ? 3 : 2);
 
     ESP_LOGI(TAG, "Deleted rotary encoder, A: %d, B: %d, BTN: %d", handle->pin_a, handle->pin_b, handle->pin_btn);
     free(handle);
@@ -303,6 +348,11 @@ esp_err_t rotary_encoder_delete(rotary_encoder_handle_t handle)
 esp_err_t rotary_encoder_enable_acceleration(rotary_encoder_handle_t handle, uint16_t coeff)
 {
     CHECK_ARG(handle);
+
+    // The callback holds the lock, so taking it here would deadlock
+    if (is_callback_task(handle))
+        return ESP_ERR_INVALID_STATE;
+
     xSemaphoreTake(handle->lock, portMAX_DELAY);
     handle->acceleration.coeff = coeff;
     handle->acceleration.last_time = esp_timer_get_time();
@@ -313,6 +363,11 @@ esp_err_t rotary_encoder_enable_acceleration(rotary_encoder_handle_t handle, uin
 esp_err_t rotary_encoder_disable_acceleration(rotary_encoder_handle_t handle)
 {
     CHECK_ARG(handle);
+
+    // The callback holds the lock, so taking it here would deadlock
+    if (is_callback_task(handle))
+        return ESP_ERR_INVALID_STATE;
+
     xSemaphoreTake(handle->lock, portMAX_DELAY);
     handle->acceleration.coeff = 0;
     xSemaphoreGive(handle->lock);

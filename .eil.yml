@@ -1,7 +1,7 @@
 ---
 name: encoder
 description: HW timer-based driver for incremental rotary encoders
-version: 3.0.3
+version: 4.0.0
 groups:
   - input
 code_owners:
@@ -9,6 +9,7 @@ code_owners:
 depends:
   - driver
   - freertos
+  - esp_timer
   - log
 thread_safe: yes
 license: BSD-3-Clause
