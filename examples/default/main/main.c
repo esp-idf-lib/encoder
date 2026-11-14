@@ -3,47 +3,42 @@
 #include <freertos/queue.h>
 #include <freertos/task.h>
 #include <encoder.h>
-#include <esp_idf_lib_helpers.h>
+
 #include <esp_log.h>
 
-// Connect common encoder pin to ground
-#if HELPER_TARGET_IS_ESP8266
-#define RE_A_GPIO   14
-#define RE_B_GPIO   12
-#define RE_BTN_GPIO 13
-
-#elif HELPER_TARGET_IS_ESP32
-#define RE_A_GPIO   16
-#define RE_B_GPIO   17
-#define RE_BTN_GPIO 5
-
-#else
-#error Unknown platform
-#endif
-
-#define EV_QUEUE_LEN 5
+#define EV_QUEUE_LEN 32
 
 static const char *TAG = "encoder_example";
 
 static QueueHandle_t event_queue;
 static rotary_encoder_handle_t re;
+static uint32_t dropped_events;
 
 static void encoder_event_handler(const rotary_encoder_event_t *event, void *ctx)
 {
     QueueHandle_t queue = (QueueHandle_t)ctx;
-    xQueueSendToBack(queue, event, 0);
+
+    // The callback runs in the timer task, so it cannot wait for the queue: the
+    // events that do not fit have to be dropped, and the main loop reports them
+    if (xQueueSendToBack(queue, event, 0) != pdTRUE)
+        dropped_events++;
 }
 
 void test(void *arg)
 {
     // Create queue for rotary encoder events
     event_queue = xQueueCreate(EV_QUEUE_LEN, sizeof(rotary_encoder_event_t));
+    if (!event_queue)
+    {
+        ESP_LOGE(TAG, "Could not create the event queue");
+        return;
+    }
 
     // Create an encoder
     rotary_encoder_config_t config = ROTARY_ENCODER_DEFAULT_CONFIG();
-    config.pin_a = RE_A_GPIO;
-    config.pin_b = RE_B_GPIO;
-    config.pin_btn = RE_BTN_GPIO;
+    config.pin_a = (gpio_num_t)CONFIG_EXAMPLE_RE_A_GPIO;
+    config.pin_b = (gpio_num_t)CONFIG_EXAMPLE_RE_B_GPIO;
+    config.pin_btn = (gpio_num_t)CONFIG_EXAMPLE_RE_BTN_GPIO;
     config.callback = encoder_event_handler;
     config.callback_ctx = event_queue;
     ESP_ERROR_CHECK(rotary_encoder_create(&config, &re));
@@ -55,6 +50,12 @@ void test(void *arg)
     while (1)
     {
         xQueueReceive(event_queue, &e, portMAX_DELAY);
+
+        if (dropped_events)
+        {
+            ESP_LOGW(TAG, "%" PRIu32 " event(s) were lost, the queue is too short", dropped_events);
+            dropped_events = 0;
+        }
 
         switch (e.type)
         {
