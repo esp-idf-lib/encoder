@@ -1,11 +1,15 @@
 menu "Rotary encoders"
 
 	config RE_INTERVAL_US
-		int "Default polling interval, us"
+		int "Polling interval, us"
+		range 100 10000
 		default 1000
 		help
-		    Default polling interval in microseconds. Can be overridden per-encoder at runtime
-		    via rotary_encoder_config_t.polling_interval_us.
+		    Polling interval in microseconds. It is fixed at build time and cannot be
+		    changed at runtime, because the button timings are counted in polling
+		    intervals. The value sets the resolution of the encoder: a full detent
+		    takes four polls, so the interval must be smaller than a quarter of the
+		    shortest time the encoder stays in one state while it is turned.
 
 	config RE_BTN_DEAD_TIME_US
 		int "Default button dead time, us"
